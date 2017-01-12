@@ -46,6 +46,7 @@ import org.opendatakit.briefcase.model.ExportSucceededEvent;
 import org.opendatakit.briefcase.model.FormStatusEvent;
 import org.opendatakit.briefcase.model.IFormDefinition;
 
+
 public class ScrollingStatusListDialog extends JDialog implements ActionListener {
 
   /**
@@ -132,7 +133,7 @@ public class ScrollingStatusListDialog extends JDialog implements ActionListener
       editorArea.setText(event.getStatus().getStatusHistory());
     }
   }
-  
+
   @EventSubscriber(eventClass = ExportProgressEvent.class)
   public void onEvent(ExportProgressEvent event) {
     appendToDocument(editorArea, event.getText());
