@@ -33,8 +33,13 @@ The main class is `org.opendatakit.briefcase.ui.MainBriefcaseWindow`. This repos
  
 ## Running the project
  
-To run the project, use the `run` Gradle task. To package a runnable jar, use the `jar` Gradle task.
-To try it, you can use the demo server. In the window that opens when running, choose connect then fill in the URL [http://opendatakit.appspot.com](http://opendatakit.appspot.com) leave username and password blank.
+To run the project, go to the `View` menu, then `Tool Windows > Gradle`. `run` will be in `odk-briefcase > Tasks > application > run`. Double-click `run` to run the application. This Gradle task will now be the default action in your `Run` menu. 
+
+You must use the Gradle task to run the application because there is a generated class (`BuildConfig`) that IntelliJ may not properly import and recognize.
+
+To package a runnable jar, use the `jar` Gradle task.
+
+To try the app, you can use the demo server. In the window that opens when running, choose Connect, then fill in the URL [http://opendatakit.appspot.com](http://opendatakit.appspot.com) leave username and password blank.
 
 ## Contributing code
 Any and all contributions to the project are welcome. ODK Briefcase is used across the world primarily by organizations with a social purpose so you can have real impact!
@@ -42,6 +47,6 @@ Any and all contributions to the project are welcome. ODK Briefcase is used acro
 If you're ready to contribute code, see [the contribution guide](CONTRIBUTING.md).
 
 ## Downloading builds
-Per-commit debug builds can be found on [CircleCI](https://circleci.com/gh/opendatakit/briefcase). Login with your GitHub account, click the build you'd like, then find the JAR in the Artifacts tab.
+Per-commit debug builds can be found on [CircleCI](https://circleci.com/gh/opendatakit/briefcase). Login with your GitHub account, click the build you'd like, then find the JAR in the Artifacts tab under $CIRCLE_ARTIFACTS/libs.
 
 Current and previous production builds can be found on the [ODK website](https://opendatakit.org/downloads/download-info/odk-briefcase/).

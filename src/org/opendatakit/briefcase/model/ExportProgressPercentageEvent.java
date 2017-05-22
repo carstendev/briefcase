@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011 University of Washington.
+ * Copyright (C) 2017 Shivam Tripathi.
  * 
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -16,13 +16,15 @@
 
 package org.opendatakit.briefcase.model;
 
-public class FileSystemException extends Exception {
-  /**
-   * 
-   */
-  private static final long serialVersionUID = 3142210034175698950L;
+public class ExportProgressPercentageEvent {
+  private final double progress;
 
-  public FileSystemException(String message) {
-    super(message);
+  public ExportProgressPercentageEvent(double progress) {
+    this.progress = progress;
   }
+
+  public double getProgress() {
+    return progress;
+  }
+
 }

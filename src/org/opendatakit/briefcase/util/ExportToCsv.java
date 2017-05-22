@@ -16,30 +16,6 @@
 
 package org.opendatakit.briefcase.util;
 
-import java.io.ByteArrayInputStream;
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.UnsupportedEncodingException;
-import java.security.InvalidAlgorithmParameterException;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
-import java.text.DateFormat;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.logging.Logger;
-
-import javax.crypto.Cipher;
-import javax.crypto.CipherInputStream;
-import javax.crypto.NoSuchPaddingException;
-
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.io.FileUtils;
 import org.bushe.swing.event.EventBus;
@@ -51,10 +27,37 @@ import org.kxml2.kdom.Node;
 import org.opendatakit.briefcase.model.BriefcaseFormDefinition;
 import org.opendatakit.briefcase.model.CryptoException;
 import org.opendatakit.briefcase.model.ExportProgressEvent;
+import org.opendatakit.briefcase.model.ExportProgressPercentageEvent;
 import org.opendatakit.briefcase.model.FileSystemException;
 import org.opendatakit.briefcase.model.ParsingException;
 import org.opendatakit.briefcase.model.TerminationFuture;
 import org.opendatakit.briefcase.util.XmlManipulationUtils.FormInstanceMetadata;
+
+import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.NoSuchPaddingException;
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileFilter;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.text.DateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.logging.Logger;
 
 public class ExportToCsv implements ITransformFormAction {
 
@@ -68,11 +71,15 @@ public class ExportToCsv implements ITransformFormAction {
   BriefcaseFormDefinition briefcaseLfd;
   TerminationFuture terminationFuture;
   Map<TreeElement, OutputStreamWriter> fileMap = new HashMap<TreeElement, OutputStreamWriter>();
+  Map<String, String> fileHashMap = new HashMap<String, String>();
   
   boolean exportMedia = true;
   Date startDate;
   Date endDate;
   boolean overwrite = false;
+  int totalFilesSkipped = 0;
+  int totalInstances = 0;
+  int processedInstances = 0;
   
   
   // Default briefcase constructor
@@ -117,22 +124,49 @@ public class ExportToCsv implements ITransformFormAction {
       }
     }
 
-    if (exportMedia) {
-       if (!outputMediaDir.exists()) {
-         if (!outputMediaDir.mkdir()) {
-           EventBus
-               .publish(new ExportProgressEvent("Unable to create destination media directory"));
-           return false;
-         }
-       }
-    }
-
     if (!processFormDefinition()) {
       // weren't able to initialize the csv file...
       return false;
     }
 
-    File[] instances = instancesDir.listFiles();
+    File[] instances = instancesDir.listFiles(new FileFilter() {
+      public boolean accept(File file) {
+        // do we have a folder with submission.xml inside
+        return file.isDirectory() && new File(file, "submission.xml").exists();
+      }
+    });
+    totalInstances = instances.length;
+
+    // Sorts the instances by the submission date. If no submission date, we
+    // assume it to be latest.
+    if (instances != null) {
+      Arrays.sort(instances, new Comparator<File>() {
+        public int compare(File f1, File f2) {
+          try {
+            if (f1.isDirectory() && f2.isDirectory()) {
+              File submission1 = new File(f1, "submission.xml");
+              String submissionDate1String = XmlManipulationUtils.parseXml(submission1).getRootElement()
+                  .getAttributeValue(null, "submissionDate");
+
+              File submission2 = new File(f2, "submission.xml");
+              String submissionDate2String = XmlManipulationUtils.parseXml(submission2).getRootElement()
+                  .getAttributeValue(null, "submissionDate");
+
+              Date submissionDate1 = StringUtils.isNotEmptyNotNull(submissionDate1String)
+                  ? WebUtils.parseDate(submissionDate1String) : new Date();
+              Date submissionDate2 = StringUtils.isNotEmptyNotNull(submissionDate2String)
+                  ? WebUtils.parseDate(submissionDate2String) : new Date();
+              return submissionDate1.compareTo(submissionDate2);
+            }
+          } catch (ParsingException e) {
+            e.printStackTrace();
+          } catch (FileSystemException e) {
+            e.printStackTrace();
+          }
+          return 0;
+        }
+      });
+    }
 
     for (File instanceDir : instances) {
       if ( terminationFuture.isCancelled() ) {
@@ -432,6 +466,13 @@ public class ExportToCsv implements ITransformFormAction {
             first = false;
           } else {
             if (exportMedia) {
+               if (!outputMediaDir.exists()) {
+                  if (!outputMediaDir.mkdir()) {
+                    EventBus.publish(new ExportProgressEvent("Unable to create destination media directory"));
+                    return false;
+                  }
+               }
+
                int dotIndex = binaryFilename.lastIndexOf(".");
                String namePart = (dotIndex == -1) ? binaryFilename : binaryFilename.substring(0,
                    dotIndex);
@@ -441,11 +482,37 @@ public class ExportToCsv implements ITransformFormAction {
                String destBinaryFilename = binaryFilename;
                int version = 1;
                File destFile = new File(outputMediaDir, destBinaryFilename);
-               while (destFile.exists()) {
-                 destBinaryFilename = namePart + "-" + (++version) + extPart;
-                 destFile = new File(outputMediaDir, destBinaryFilename);
-               }
-               if ( binaryFile.exists() ) {
+               boolean exists = false;
+                String binaryFileHash = null;
+                String destFileHash = null;
+ 
+                if (destFile.exists() && binaryFile.exists()) {
+                   binaryFileHash = FileSystemUtils.getMd5Hash(binaryFile);
+                     
+                   while (destFile.exists()) {
+                    /* check if the contents of the destFile and binaryFile is same
+                     * if yes, skip the export of such file
+                     */
+ 
+                    if (fileHashMap.containsKey(destFile.getName())) {
+                       destFileHash = fileHashMap.get(destFile.getName());
+                    } else {
+                       destFileHash = FileSystemUtils.getMd5Hash(destFile);
+                       if (destFileHash != null) {
+                         fileHashMap.put(destFile.getName(), destFileHash);
+                       }
+                    }
+ 
+                    if (binaryFileHash != null && destFileHash != null && destFileHash.equals(binaryFileHash)) {
+                     exists = true;
+                     break;
+                    }
+ 
+                    destBinaryFilename = namePart + "-" + (++version) + extPart;
+                    destFile = new File(outputMediaDir, destBinaryFilename);
+                  }
+                }
+               if (binaryFile.exists() && exists == false) {
                  FileUtils.copyFile(binaryFile, destFile);
                }
                emitString(osw, first, MEDIA_DIR + File.separator + destFile.getName());
@@ -755,7 +822,11 @@ public class ExportToCsv implements ITransformFormAction {
           + instanceDir.getPath()));
       return false;
     }
+
+    processedInstances++;
+
     EventBus.publish(new ExportProgressEvent("Processing instance: " + instanceDir.getName()));
+    EventBus.publish(new ExportProgressPercentageEvent((processedInstances * 100.0) / totalInstances));
 
     // If we are encrypted, be sure the temporary directory
     // that will hold the unencrypted files is created and empty.
@@ -851,21 +922,18 @@ public class ExportToCsv implements ITransformFormAction {
               instanceDir, unEncryptedDir);
           doc = outcome.submission;
           isValidated = outcome.isValidated;
-        } catch (ParsingException e) {
-          e.printStackTrace();
+        } catch (ParsingException | CryptoException | FileSystemException e) {
+          //Was unable to parse file or decrypt file or a file system error occurred
+          //Hence skip this instance
           EventBus.publish(new ExportProgressEvent("Error decrypting submission "
-              + instanceDir.getName() + " Cause: " + e.toString()));
-          return false;
-        } catch (FileSystemException e) {
-          e.printStackTrace();
-          EventBus.publish(new ExportProgressEvent("Error decrypting submission "
-              + instanceDir.getName() + " Cause: " + e.toString()));
-          return false;
-        } catch (CryptoException e) {
-          e.printStackTrace();
-          EventBus.publish(new ExportProgressEvent("Error decrypting submission "
-              + instanceDir.getName() + " Cause: " + e.toString()));
-          return false;
+                  + instanceDir.getName() + " Cause: " + e.toString() + " skipping...."));
+
+          log.info("Error decrypting submission "
+                  + instanceDir.getName() + " Cause: " + e.toString());
+
+          //update total number of files skipped
+          totalFilesSkipped++;
+          return true;
         }
       }
 
@@ -959,5 +1027,19 @@ public class ExportToCsv implements ITransformFormAction {
   @Override
   public BriefcaseFormDefinition getFormDefinition() {
     return briefcaseLfd;
+  }
+
+  @Override
+  public FilesSkipped totalFilesSkipped() {
+    //Determine if all files where skipped or just some
+    //Note that if totalInstances = 0 then no files were skipped
+    if (totalInstances == 0 || totalFilesSkipped == 0) {
+      return FilesSkipped.NONE;
+    }
+    if (totalFilesSkipped == totalInstances) {
+      return FilesSkipped.ALL;
+    } else {
+     return FilesSkipped.SOME;
+    }
   }
 }
