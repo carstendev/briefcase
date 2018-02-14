@@ -16,12 +16,10 @@
 
 package org.opendatakit.briefcase.ui;
 
-import org.opendatakit.briefcase.util.FileSystemUtils;
-
 public class MessageStrings {
 
   public static final String BRIEFCASE_STORAGE_LOCATION =
-      "ODK Briefcase Storage Location";
+      "Storage Location";
   public static final String ODK_DIRECTORY =
       "ODK Directory";
   public static final String EXPORT_DIRECTORY =
@@ -43,6 +41,7 @@ public class MessageStrings {
       "Invalid " + BRIEFCASE_STORAGE_LOCATION;
   public static final String INVALID_EXPORT_DIRECTORY =
       "Invalid " + EXPORT_DIRECTORY;
+  public static final String INVALID_DATE_RANGE_MESSAGE = "Invalid date range: Start date must be before End date.";
   public static final String INVALID_DIRECTORY =
       "Invalid Directory";
   public static final String INVALID_PEM_FILE =
@@ -50,19 +49,11 @@ public class MessageStrings {
   
   public static final String INVALID_PEM_FILE_DIALOG_TITLE =
       "Invalid Private Key (PEM) File";
-  public static final String BRIEFCASE_STORAGE_LOCATION_DIALOG_TITLE = 
-      BRIEFCASE_STORAGE_LOCATION;
-  public static final String BRIEFCASE_STORAGE_LOCATION_EXPLANATION_HTML =
-      "<body><font face=\"verdana,sans-serif\" size=\"+1\"><p>Please " +
-      "specify the location of the <em>" + FileSystemUtils.BRIEFCASE_DIR +
-      "</em> area.</p>" +
-      "<p>ODK Briefcase uses a storage area named <em>" +
-          FileSystemUtils.BRIEFCASE_DIR + 
-    "</em> identified by the " + BRIEFCASE_STORAGE_LOCATION +
-    ". This storage area holds all " +
-    "your form and submission data.</p><p>" +
-    "Once created, you can copy and transport this storage area " +
-    "across systems, just like a briefcase of paper documents.</p></font></body>";
+  static final String BRIEFCASE_WELCOME =
+          "Please set the path in your file system where Briefcase should create its\n" +
+          "storage area (a directory called ODK Briefcase Storage). This storage area will\n" +
+          "hold all your form and submission data. Once created, you can copy and transport\n" +
+          "this storage area across systems, just like a briefcase of paper documents.";
   public static final String README_CONTENTS =
       "This ODK Briefcase storage area retains\n" +
       "all the forms and submissions that have been\n" +
@@ -73,4 +64,20 @@ public class MessageStrings {
 
   public static final String ERROR_DIALOG_TITLE =
       "ODK Briefcase Action Failed";
+  
+  public static final String PROXY_HOST = "Host";
+  public static final String PROXY_PORT = "Port";
+  public static final String PROXY_TOGGLE = "Use HTTP Proxy";
+  public static final String PROXY_SET_ADVICE =
+      "If you are behind a proxy, try setting up your proxy details through 'Settings' tab.";
+
+  public static final String PARALLEL_PULLS = "Pull submissions in parallel (experimental)";
+  static final String TRACKING_CONSENT_EXPLANATION =
+          "Please help the ODK Community of volunteers and our mission to build software that\n" +
+          "better meets your needs. We use third-party analytics tools to gather anonymous\n" +
+          "information about things like your operating system, versions, and most-used\n" +
+          "features of this software. Use of this information will always follow the ODK\n" +
+          "Community Privacy Policy.";
+
+  static final String TRACKING_CONSENT = "Gather anonymous usage data";
 }

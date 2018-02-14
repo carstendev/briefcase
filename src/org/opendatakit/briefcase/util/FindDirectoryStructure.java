@@ -1,12 +1,12 @@
 /*
  * Copyright (C) 2012 University of Washington.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
  * the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
  * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
@@ -20,17 +20,21 @@ import java.io.File;
 import java.io.FileFilter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.logging.Logger;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
 /**
  * Originally written by Dylan.  Determines the mounts that have SD Cards attached.
- * 
+ *
  * @author the.dylan.price@gmail.com
  * @author mitchellsundt@gmail.com
  *
  */
 public class FindDirectoryStructure {
-  private static final Logger _logger = Logger.getLogger(FindDirectoryStructure.class.getName());
+
+  private static final Log log = LogFactory.getLog(FindDirectoryStructure.class);
+
   private static final String PROPERTY_OS = "os.name";
   private static final String OS_WINDOWS = "Windows";
   private static final String OS_MAC = "Mac";
@@ -40,18 +44,28 @@ public class FindDirectoryStructure {
     String os = System.getProperty(PROPERTY_OS);
     return os.contains(OS_MAC);
   }
-  
+
+  public static boolean isUnix() {
+    String os = System.getProperty(PROPERTY_OS).toLowerCase();
+    return (os.contains("nix") || os.contains("nux") || os.contains("aix"));
+  }
+
+  public static boolean isWindows() {
+    String os = System.getProperty(PROPERTY_OS).toLowerCase();
+    return os.contains("windows");
+  }
+
   /**
    * Searches mounted drives for /odk/instances and returns a list of
    * positive results. Works for Windows, Mac, and Linux operating
    * systems.
-   * 
+   *
    * @return a {@link List} of {@link File}  containing matches of currently mounted file systems
    *         which contain the directoryStructureToSearchFor
    */
   public static List<File> searchMountedDrives() {
     String os = System.getProperty(PROPERTY_OS);
-    _logger.info("OS reported as: " + os);
+    log.info("OS reported as: " + os);
     if (os.contains(OS_WINDOWS)) {
       File[] drives = File.listRoots();
       return search(drives, true);
@@ -68,10 +82,10 @@ public class FindDirectoryStructure {
       File f = new File("/media", username);
       if (f.exists() && f.isDirectory()) {
         mountslist.add(f);
-      } 
+      }
 
       f = new File("/run/media", username);
-      if (f.exists() && f.isDirectory()){
+      if (f.exists() && f.isDirectory()) {
         mountslist.add(f);
       }
       return search(mountslist.toArray(new File[mountslist.size()]), false);
@@ -88,11 +102,11 @@ public class FindDirectoryStructure {
     }
     return false;
   }
-  
+
   /**
    * Checks each given potential directory for existence of odk/instances
    * under it and returns a list of positive matches.
-   * 
+   *
    * @param mounts
    *          the potential mount points to check.
    * @param isDirectChild
@@ -116,8 +130,9 @@ public class FindDirectoryStructure {
             @Override
             public boolean accept(File f) {
               return f.isDirectory();
-            }});
-          
+            }
+          });
+
           for ( File s : subdirs ) {
             if ( hasOdkInstancesDirectory(s) ) {
               candidates.add(s);

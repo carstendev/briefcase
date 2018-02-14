@@ -33,12 +33,14 @@ import javax.swing.JTextField;
 import javax.swing.LayoutStyle.ComponentPlacement;
 import javax.swing.UIManager;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.bushe.swing.event.annotation.AnnotationProcessor;
 import org.bushe.swing.event.annotation.EventSubscriber;
+import org.opendatakit.briefcase.model.BriefcaseFormDefinition;
 import org.opendatakit.briefcase.model.BriefcasePreferences;
 import org.opendatakit.briefcase.model.FormStatus;
 import org.opendatakit.briefcase.model.FormStatusEvent;
-import org.opendatakit.briefcase.model.BriefcaseFormDefinition;
 import org.opendatakit.briefcase.model.ServerConnectionInfo;
 import org.opendatakit.briefcase.model.TerminationFuture;
 import org.opendatakit.briefcase.model.TransferAbortEvent;
@@ -48,8 +50,9 @@ import org.opendatakit.briefcase.util.BadFormDefinition;
 import org.opendatakit.briefcase.util.TransferAction;
 
 public class MainFormUploaderWindow {
-  private static final String FORM_UPLOADER_VERSION = "ODK FormUploader - " + BriefcasePreferences.VERSION;
 
+  private static final Log log = LogFactory.getLog(MainFormUploaderWindow.class);
+  private static final String FORM_UPLOADER_VERSION = "ODK FormUploader - " + BriefcasePreferences.VERSION;
   private static final String UPLOADING_DOT_ETC = "Uploading..........";
 
   private ServerConnectionInfo destinationServerInfo = null;
@@ -84,12 +87,11 @@ public class MainFormUploaderWindow {
 
           MainFormUploaderWindow window = new MainFormUploaderWindow();
           window.frame.setTitle(FORM_UPLOADER_VERSION);
-          ImageIcon icon = new ImageIcon(
-              MainFormUploaderWindow.class.getClassLoader().getResource("odk_logo.png"));
+          ImageIcon icon = new ImageIcon(MainFormUploaderWindow.class.getClassLoader().getResource("odk_logo.png"));
           window.frame.setIconImage(icon.getImage());
           window.frame.setVisible(true);
         } catch (Exception e) {
-          e.printStackTrace();
+          log.error("failed to launch app", e);
         }
       }
     });
@@ -119,7 +121,7 @@ public class MainFormUploaderWindow {
             lblUploading.setText("");
             btnDetails.setEnabled(false);
           } catch ( BadFormDefinition ex ) {
-            ex.printStackTrace();
+            log.error("failed to create form definition for upload", ex);
           }
         }
       }
@@ -141,16 +143,11 @@ public class MainFormUploaderWindow {
       d.setVisible(true);
       if (d.isSuccessful()) {
         ServerConnectionInfo info = d.getServerInfo();
-        if (info.isOpenRosaServer()) {
-          destinationServerInfo = d.getServerInfo();
-          txtDestinationName.setText(destinationServerInfo.getUrl());
-          setUploadFormEnabled(true);
-          lblUploading.setText("");
-          btnDetails.setEnabled(false);
-        } else {
-          ODKOptionPane.showErrorDialog(MainFormUploaderWindow.this.frame,
-              "Server is not an ODK Aggregate 1.0 server", "Invalid Server URL");
-        }
+        destinationServerInfo = d.getServerInfo();
+        txtDestinationName.setText(destinationServerInfo.getUrl());
+        setUploadFormEnabled(true);
+        lblUploading.setText("");
+        btnDetails.setEnabled(false);
       }
     }
 
@@ -219,13 +216,13 @@ public class MainFormUploaderWindow {
 
   @EventSubscriber(eventClass = TransferFailedEvent.class)
   public void failedCompletion(TransferFailedEvent event) {
-    lblUploading.setText("Failed!");
+    lblUploading.setText("Failed.");
     setActiveTransferState(false);
   }
 
   @EventSubscriber(eventClass = TransferSucceededEvent.class)
   public void successfulCompletion(TransferSucceededEvent event) {
-    lblUploading.setText("Succeeded!");
+    lblUploading.setText("Succeeded.");
     setActiveTransferState(false);
   }
   
@@ -266,10 +263,11 @@ public class MainFormUploaderWindow {
           ScrollingStatusListDialog.showDialog(
             MainFormUploaderWindow.this.frame, fs.getFormDefinition(), fs.getStatusHistory());
         }
-      }});
+      }
+    });
 
     btnUploadForm = new JButton("Upload Form");
-    btnUploadForm.addActionListener(new ActionListener(){
+    btnUploadForm.addActionListener(new ActionListener() {
 
       @Override
       public void actionPerformed(ActionEvent e) {
@@ -278,7 +276,8 @@ public class MainFormUploaderWindow {
         TransferAction.uploadForm(
             MainFormUploaderWindow.this.frame.getOwner(),
             destinationServerInfo, terminationFuture, formDefn, fs);
-      }});
+      }
+    });
 
     btnCancel = new JButton("Cancel");
     btnCancel.addActionListener(new ActionListener() {
@@ -286,7 +285,8 @@ public class MainFormUploaderWindow {
       public void actionPerformed(ActionEvent arg0) {
         terminationFuture.markAsCancelled(
             new TransferAbortEvent("Form upload cancelled by user."));
-      }});
+      }
+    });
     
     btnClose = new JButton("Close");
     btnClose.addActionListener(new ActionListener() {

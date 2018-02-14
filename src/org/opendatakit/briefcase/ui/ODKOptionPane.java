@@ -16,13 +16,6 @@
 
 package org.opendatakit.briefcase.ui;
 
-import javax.swing.BorderFactory;
-import javax.swing.JDialog;
-import javax.swing.JLabel;
-import javax.swing.JOptionPane;
-import javax.swing.JScrollPane;
-import javax.swing.JTextArea;
-import javax.swing.border.EmptyBorder;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -32,6 +25,14 @@ import java.awt.Toolkit;
 import java.awt.Window;
 import java.awt.event.ComponentEvent;
 import java.awt.event.ComponentListener;
+
+import javax.swing.BorderFactory;
+import javax.swing.JDialog;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.border.EmptyBorder;
 
 /**
  * Enhanced JOptionPane.showMessageDialog() for a JOptionPane.ERROR_MESSAGE.
@@ -86,12 +87,13 @@ public class ODKOptionPane {
         if ( component.getComponent().equals(scrollPane.getVerticalScrollBar()) ) {
           scrollPane.setBorder(BorderFactory.createLineBorder(Color.GRAY));
         }
-      }});
+      }
+    });
     
     // set preferred and minimum widths of the scroll pane to 
     // the width of the 't' label above with 5 lines within the scroll area.
     Dimension pref = t.getPreferredSize();
-    pref.setSize(pref.getWidth(), 5.3*pref.getHeight());
+    pref.setSize(pref.getWidth(), 5.3 * pref.getHeight());
     scrollPane.setMinimumSize(pref);
     scrollPane.setPreferredSize(pref);
     JOptionPane.showMessageDialog(parentComponent,

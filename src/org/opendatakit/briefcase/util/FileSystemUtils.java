@@ -23,16 +23,14 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
 import java.math.BigInteger;
+import java.nio.file.Path;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
-import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,20 +51,27 @@ import org.kxml2.kdom.Document;
 import org.kxml2.kdom.Element;
 import org.kxml2.kdom.Node;
 import org.opendatakit.briefcase.model.BriefcaseFormDefinition;
-import org.opendatakit.briefcase.model.BriefcasePreferences;
 import org.opendatakit.briefcase.model.CryptoException;
 import org.opendatakit.briefcase.model.FileSystemException;
 import org.opendatakit.briefcase.model.OdkCollectFormDefinition;
 import org.opendatakit.briefcase.model.ParsingException;
-import org.opendatakit.briefcase.ui.MessageStrings;
+import org.opendatakit.briefcase.ui.StorageLocation;
 import org.opendatakit.briefcase.util.XmlManipulationUtils.FormInstanceMetadata;
 
 public class FileSystemUtils {
-  static final Log logger = LogFactory.getLog(FileSystemUtils.class);
 
-  public static final String BRIEFCASE_DIR = "ODK Briefcase Storage";
-  static final String README_TXT = "readme.txt";
-  static final String FORMS_DIR = "forms";
+  static final Log log = LogFactory.getLog(FileSystemUtils.class);
+
+  public static FormCacheable formCache = new NullFormCache();
+
+  public static final String FORMS_DIR = "forms";
+  static final String INSTANCE_DIR = "instances";
+  static final String HSQLDB_DIR = "info.hsqldb";
+  static final String HSQLDB_DB = "info";
+  static final String SMALLSQL_DIR = "info.db";
+  static final String HSQLDB_JDBC_PREFIX = "jdbc:hsqldb:file:";
+
+  static final String SMALLSQL_JDBC_PREFIX = "jdbc:smallsql:";
 
   // encryption support....
   static final String ASYMMETRIC_ALGORITHM = "RSA/NONE/OAEPWithSHA256AndMGF1Padding";
@@ -77,76 +82,6 @@ public class FileSystemUtils {
   public static final String getMountPoint() {
     return System.getProperty("os.name").startsWith("Win") ? File.separator + ".." : (System
         .getProperty("os.name").startsWith("Mac") ? "/Volumes/" : "/mnt/");
-  }
-
-  public static final boolean isBriefcaseStorageLocationParentFolder(File pathname) {
-    if ( !pathname.exists() ) {
-      return false;
-    }
-    File folder = new File(pathname, BRIEFCASE_DIR);
-    if ( !folder.exists() ) {
-      return false;
-    }
-    if ( !folder.isDirectory() ) {
-      return false;
-    }
-    File forms = new File(folder, FORMS_DIR);
-    if ( !forms.exists() ) {
-      return false;
-    }
-    if ( !forms.isDirectory() ) {
-      return false;
-    }
-    return true;
-  }
-
-  public static final void assertBriefcaseStorageLocationParentFolder(File pathname) throws FileSystemException {
-    File folder = new File(pathname, BRIEFCASE_DIR);
-    if ( !folder.exists() ) {
-      if ( !folder.mkdir() ) {
-        throw new FileSystemException("Unable to create " + BRIEFCASE_DIR);
-      }
-    }
-    File forms = new File(folder, FORMS_DIR);
-    if ( !forms.exists() ) {
-      if ( !forms.mkdir() ) {
-        throw new FileSystemException("Unable to create " + FORMS_DIR);
-      }
-    }
-
-    File f = new File(folder, README_TXT);
-    if ( !f.exists() ) {
-      try {
-        if ( !f.createNewFile() ) {
-          throw new FileSystemException("Unable to create " + README_TXT);
-        }
-      } catch (IOException e) {
-        e.printStackTrace();
-        throw new FileSystemException("Unable to create " + README_TXT);
-      }
-    }
-    try {
-      OutputStreamWriter fout = new OutputStreamWriter(new FileOutputStream(f,false), "UTF-8");
-      fout.write(MessageStrings.README_CONTENTS);
-      fout.close();
-    } catch (IOException e) {
-      e.printStackTrace();
-      throw new FileSystemException("Unable to write " + README_TXT);
-    }
-  }
-
-  public static final boolean isUnderBriefcaseFolder(File pathname) {
-    File parent = (pathname == null ? null : pathname.getParentFile());
-    File current = pathname;
-    while (parent != null) {
-      if (isBriefcaseStorageLocationParentFolder(parent) &&
-          current.getName().equals(BRIEFCASE_DIR)) {
-        return true;
-      }
-      current = parent;
-      parent = parent.getParentFile();
-    }
-    return false;
   }
 
   // Predicates to determine whether the folder is an ODK Device
@@ -180,6 +115,11 @@ public class FileSystemUtils {
     return foi.exists() && foi.isDirectory();
   }
 
+  /** Creates a new FormCache in the briefcase folder. Called, at program startup if the briefcase
+   * folder has been established, and whenever it changes */
+  public static void createFormCacheInBriefcaseFolder() {
+    FileSystemUtils.formCache = new FormCache(new StorageLocation().getBriefcaseFolder());
+  }
 
   public static final List<BriefcaseFormDefinition> getBriefcaseFormList() {
     List<BriefcaseFormDefinition> formsList = new ArrayList<BriefcaseFormDefinition>();
@@ -190,10 +130,21 @@ public class FileSystemUtils {
         if (f.isDirectory()) {
           try {
             File formFile = new File(f, f.getName() + ".xml");
-            formsList.add(new BriefcaseFormDefinition(f, formFile));
+            String formFileHash = getMd5Hash(formFile);
+            String existingFormFileHash = formCache.getFormFileMd5Hash(formFile.getAbsolutePath());
+            BriefcaseFormDefinition existingDefinition = formCache.getFormFileFormDefinition(formFile.getAbsolutePath());
+            if (existingFormFileHash == null
+                    || existingDefinition == null
+                    || !existingFormFileHash.equalsIgnoreCase(formFileHash)) {
+              // overwrite cache if the form's hash is not the same or there's no entry for the form in the cache.
+              formCache.putFormFileMd5Hash(formFile.getAbsolutePath(), formFileHash);
+              existingDefinition = new BriefcaseFormDefinition(f, formFile);
+              formCache.putFormFileFormDefinition(formFile.getAbsolutePath(), existingDefinition);
+            }
+
+            formsList.add(existingDefinition);
           } catch (BadFormDefinition e) {
-            // TODO report bad form definition?
-            e.printStackTrace();
+            log.debug("bad form definition", e);
           }
         } else {
           // junk?
@@ -214,8 +165,7 @@ public class FileSystemUtils {
           try {
             formsList.add(new OdkCollectFormDefinition(f));
           } catch (BadFormDefinition e) {
-            // TODO report bad form definition?
-            e.printStackTrace();
+            log.debug("bad form definition", e);
           }
         }
       }
@@ -223,13 +173,8 @@ public class FileSystemUtils {
     return formsList;
   }
 
-  public static File getBriefcaseFolder() {
-    return new File(new File(BriefcasePreferences
-        .getBriefcaseDirectoryProperty()), BRIEFCASE_DIR);
-  }
-
   public static File getFormsFolder() {
-    return new File(getBriefcaseFolder(), FORMS_DIR);
+    return new File(new StorageLocation().getBriefcaseFolder(), FORMS_DIR);
   }
 
   public static String asFilesystemSafeName(String formName) {
@@ -247,31 +192,55 @@ public class FileSystemUtils {
     return formPath;
   }
 
-  public static Connection getFormDatabase(File formDirectory) throws FileSystemException {
-    File db = new File(formDirectory, "info.db");
+  static String getFormDatabaseUrl(File formDirectory) throws FileSystemException {
 
-    String createFlag = "";
-    if ( !db.exists() ) {
-      createFlag = "?create=true";
-    }
-    String jdbcUrl = "jdbc:smallsql:" + db.getAbsolutePath() + createFlag;
+    File oldDbFile = new File(formDirectory, SMALLSQL_DIR);
+    File dbDir = new File(formDirectory, HSQLDB_DIR);
+    File dbFile = new File(dbDir, HSQLDB_DB);
 
-    try {
-      // register driver
-      Class.forName( "smallsql.database.SSDriver" );
-    } catch (ClassNotFoundException e) {
-      e.printStackTrace();
-      throw new FileSystemException("Unable to load SmallSQL driver");
+    if (!dbDir.exists()) {
+      if (!dbDir.mkdirs()) {
+        log.warn("failed to create database directory: " + dbDir);
+      } else if (oldDbFile.exists()) {
+        migrateDatabase(oldDbFile, dbFile);
+      }
     }
 
-    Connection conn;
+    return getJdbcUrl(dbFile);
+  }
+
+  private static void migrateDatabase(File oldDbFile, File dbFile) throws FileSystemException {
     try {
-      conn = DriverManager.getConnection( jdbcUrl );
+      DatabaseUtils.migrateData(getJdbcUrl(oldDbFile), getJdbcUrl(dbFile));
     } catch (SQLException e) {
-      e.printStackTrace();
-      throw new FileSystemException("Unable to open JDBC url: " + jdbcUrl);
+      throw new FileSystemException(String.format("failed to migrate database %s to %s", oldDbFile, dbFile), e);
     }
-    return conn;
+    if (!oldDbFile.renameTo(getBackupFile(oldDbFile))) {
+      throw new FileSystemException(String.format("failed to backup database after migration"));
+    }
+  }
+
+  private static File getBackupFile(File file) {
+    return new File(file.getParent(), file.getName() + ".bak");
+  }
+
+  private static String getJdbcUrl(File dbFile) throws FileSystemException {
+    if (isHypersonicDatabase(dbFile)) {
+      return HSQLDB_JDBC_PREFIX + dbFile.getAbsolutePath();
+    } else if (isSmallSQLDatabase(dbFile)) {
+      return SMALLSQL_JDBC_PREFIX + dbFile.getAbsolutePath() + (dbFile.exists() ? "" : "?create=true");
+    } else {
+      throw new FileSystemException("unknown database type for file " + dbFile);
+    }
+  }
+
+  private static boolean isSmallSQLDatabase(File dbFile) {
+    return SMALLSQL_DIR.equals(dbFile.getName());
+  }
+
+  private static boolean isHypersonicDatabase(File dbFile) {
+    File parentFile = dbFile.getParentFile();
+    return HSQLDB_DB.equals(dbFile.getName()) && parentFile != null && HSQLDB_DIR.equals(parentFile.getName());
   }
 
   public static File getFormDefinitionFileIfExists(File formDirectory) {
@@ -287,12 +256,12 @@ public class FileSystemUtils {
 
   public static File getTempFormDefinitionFile()
       throws FileSystemException {
-    File briefcase = getBriefcaseFolder();
+    File briefcase = new StorageLocation().getBriefcaseFolder();
     File tempDefnFile;
     try {
       tempDefnFile = File.createTempFile("tempDefn", ".xml", briefcase);
     } catch (IOException e) {
-      e.printStackTrace();
+      log.error("failed to create temp file for form def", e);
       return null;
     }
     return tempDefnFile;
@@ -327,21 +296,32 @@ public class FileSystemUtils {
   }
 
   public static File getFormInstancesDirectory(File formDirectory) throws FileSystemException {
-    File instancesDir = new File(formDirectory, "instances");
+    File instancesDir = new File(formDirectory, INSTANCE_DIR);
     if (!instancesDir.exists() && !instancesDir.mkdirs()) {
       throw new FileSystemException("unable to create directory: " + instancesDir.getAbsolutePath());
     }
     return instancesDir;
   }
 
-  public static Set<File> getFormSubmissionDirectories(File formDirectory) {
-    Set<File> files = new TreeSet<File>();
+  public static boolean isFormRelativeInstancePath(String path) {
+    return path.startsWith(INSTANCE_DIR);
+  }
 
-    File formInstancesDir = null;
+  public static Path makeRelative(File parent,
+                                  File child) {
+    Path parentPath = parent.toPath();
+    Path childPath = child.toPath();
+    return parentPath.relativize(childPath);
+  }
+
+  public static Set<File> getFormSubmissionDirectories(File formDirectory) {
+    Set<File> files = new TreeSet<>();
+
+    File formInstancesDir;
     try {
       formInstancesDir = getFormInstancesDirectory(formDirectory);
     } catch (FileSystemException e) {
-      e.printStackTrace();
+      log.error("failed to get submission directory", e);
       return files;
     }
 
@@ -349,7 +329,7 @@ public class FileSystemUtils {
     if (briefcaseInstances != null) {
       for (File briefcaseInstance : briefcaseInstances) {
         if (!briefcaseInstance.isDirectory() || briefcaseInstance.getName().startsWith(".")) {
-          logger.warn("skipping non-directory or dot-file in form instances subdirectory");
+          log.warn("skipping non-directory or dot-file in form instances subdirectory");
           continue;
         }
         files.add(briefcaseInstance);
@@ -406,7 +386,7 @@ public class FileSystemUtils {
       long lLength = file.length();
 
       if (lLength > Integer.MAX_VALUE) {
-        logger.error("File " + file.getName() + "is too large");
+        log.error("File " + file.getName() + "is too large");
         return null;
       }
 
@@ -436,59 +416,54 @@ public class FileSystemUtils {
       return md5;
 
     } catch (NoSuchAlgorithmException e) {
-      logger.error("MD5 calculation failed: " + e.getMessage());
+      log.error("MD5 calculation failed: " + e.getMessage());
       return null;
 
     } catch (FileNotFoundException e) {
-      logger.error("No File: " + e.getMessage());
+      log.error("No File: " + e.getMessage());
       return null;
     } catch (IOException e) {
-      logger.error("Problem reading from file: " + e.getMessage());
+      log.error("Problem reading from file: " + e.getMessage());
       return null;
     }
 
   }
 
-  private static final void decryptFile(EncryptionInformation ei,
-      File original, File unencryptedDir) throws IOException, NoSuchAlgorithmException,
-      NoSuchPaddingException, InvalidKeyException, InvalidAlgorithmParameterException {
-    InputStream fin = null;
-    OutputStream fout = null;
+  private static final void decryptFile(EncryptionInformation ei, File original, File unencryptedDir)
+          throws IOException, NoSuchAlgorithmException, NoSuchPaddingException, InvalidKeyException,
+          InvalidAlgorithmParameterException {
 
-    try {
-      if ( original == null ) {
-        // special case -- user marked-as-complete an encrypted file on a pre-1.4.5 ODK Aggregate
-        // need to get a Cipher to update the cipher initialization vector. 
-        ei.getCipher("missing.enc");
-        logger.info("Missing file (pre-ODK Aggregate 1.4.5 mark-as-complete on server)");
-        return;
-      }
-      
-      String name = original.getName();
-      if (!name.endsWith(ENCRYPTED_FILE_EXTENSION)) {
-        String errMsg = "Unexpected non-" + ENCRYPTED_FILE_EXTENSION + " extension " + name
-            + " -- ignoring file";
-        throw new IllegalArgumentException(errMsg);
-      }
-      name = name.substring(0, name.length() - ENCRYPTED_FILE_EXTENSION.length());
-      File decryptedFile = new File(unencryptedDir, name);
+    if (original == null) {
+      // special case -- user marked-as-complete an encrypted file on a pre-1.4.5 ODK Aggregate
+      // need to get a Cipher to update the cipher initialization vector.
+      ei.getCipher("missing.enc");
+      log.info("Missing file (pre-ODK Aggregate 1.4.5 mark-as-complete on server)");
+      return;
+    }
 
-      Cipher c = ei.getCipher(name);
+    String name = original.getName();
+    if (!name.endsWith(ENCRYPTED_FILE_EXTENSION)) {
+      String errMsg = "Unexpected non-" + ENCRYPTED_FILE_EXTENSION + " extension " + name
+              + " -- ignoring file";
+      throw new IllegalArgumentException(errMsg);
+    }
+    name = name.substring(0, name.length() - ENCRYPTED_FILE_EXTENSION.length());
+    File decryptedFile = new File(unencryptedDir, name);
 
-      // name is now the decrypted file name
-      // if it ends in ".missing" then the file
-      // was not available and the administrator
-      // marked it as complete on the SubmissionAdmin
-      // page.
-      if ( name.endsWith(MISSING_FILE_EXTENSION) ) {
-        logger.info("Missing file (ODK Aggregate 1.4.5 and higher):" + original.getName());
-        return;
-      }
-      
-      fin = new FileInputStream(original);
-      fin = new CipherInputStream(fin, c);
+    Cipher c = ei.getCipher(name);
 
-      fout = new FileOutputStream(decryptedFile);
+    // name is now the decrypted file name
+    // if it ends in ".missing" then the file
+    // was not available and the administrator
+    // marked it as complete on the SubmissionAdmin
+    // page.
+    if (name.endsWith(MISSING_FILE_EXTENSION)) {
+      log.info("Missing file (ODK Aggregate 1.4.5 and higher):" + original.getName());
+      return;
+    }
+
+    try (InputStream fin = new CipherInputStream(new FileInputStream(original), c);
+         OutputStream fout = new FileOutputStream(decryptedFile)) {
       byte[] buffer = new byte[2048];
       int len = fin.read(buffer);
       while (len != -1) {
@@ -496,22 +471,7 @@ public class FileSystemUtils {
         len = fin.read(buffer);
       }
       fout.flush();
-      logger.info("Decrpyted:" + original.getName() + " -> " + decryptedFile.getName());
-    } finally {
-      if (fin != null) {
-        try {
-          fin.close();
-        } catch (IOException e) {
-          e.printStackTrace();
-        }
-      }
-      if (fout != null) {
-        try {
-          fout.close();
-        } catch (IOException e) {
-          e.printStackTrace();
-        }
-      }
+      log.debug("Decrypted:" + original.getName() + " -> " + decryptedFile.getName());
     }
   }
 
@@ -532,26 +492,11 @@ public class FileSystemUtils {
       pkCipher.init(Cipher.DECRYPT_MODE, rsaPrivateKey);
       byte[] encryptedElementSignature = Base64.decodeBase64(base64EncryptedElementSignature);
       elementDigest = pkCipher.doFinal(encryptedElementSignature);
-    } catch (NoSuchAlgorithmException e) {
-      e.printStackTrace();
-      throw new CryptoException("Error decrypting base64EncryptedElementSignature Cause: "
-          + e.toString());
-    } catch (NoSuchPaddingException e) {
-      e.printStackTrace();
-      throw new CryptoException("Error decrypting base64EncryptedElementSignature Cause: "
-          + e.toString());
-    } catch (InvalidKeyException e) {
-      e.printStackTrace();
-      throw new CryptoException("Error decrypting base64EncryptedElementSignature Cause: "
-          + e.toString());
-    } catch (IllegalBlockSizeException e) {
-      e.printStackTrace();
-      throw new CryptoException("Error decrypting base64EncryptedElementSignature Cause: "
-          + e.toString());
-    } catch (BadPaddingException e) {
-      e.printStackTrace();
-      throw new CryptoException("Error decrypting base64EncryptedElementSignature Cause: "
-          + e.toString());
+    } catch (NoSuchAlgorithmException | BadPaddingException | IllegalBlockSizeException | InvalidKeyException
+            | NoSuchPaddingException e) {
+      String msg = "Error decrypting base64EncryptedElementSignature";
+      log.error(msg, e);
+      throw new CryptoException(msg + " Cause: " + e.toString());
     }
 
     // NOTE: will decrypt only the files in the media list, plus the encryptedSubmissionFile
@@ -603,21 +548,15 @@ public class FileSystemUtils {
       File f = (mediaName == null) ? null : new File(instanceDir, mediaName);
       try {
         decryptFile(ei, f, unencryptedDir);
-      } catch (InvalidKeyException e) {
-        e.printStackTrace();
-        throw new CryptoException("Error decrypting:" + displayedName + " Cause: " + e.toString());
-      } catch (NoSuchAlgorithmException e) {
-        e.printStackTrace();
-        throw new CryptoException("Error decrypting:" + displayedName + " Cause: " + e.toString());
-      } catch (InvalidAlgorithmParameterException e) {
-        e.printStackTrace();
-        throw new CryptoException("Error decrypting:" + displayedName + " Cause: " + e.toString());
-      } catch (NoSuchPaddingException e) {
-        e.printStackTrace();
-        throw new CryptoException("Error decrypting:" + displayedName + " Cause: " + e.toString());
+      } catch (InvalidKeyException | NoSuchPaddingException | InvalidAlgorithmParameterException
+              | NoSuchAlgorithmException e) {
+        String msg = "Error decrypting:" + displayedName;
+        log.error(msg, e);
+        throw new CryptoException(msg + " Cause: " + e.toString());
       } catch (IOException e) {
-        e.printStackTrace();
-        throw new FileSystemException("Error decrypting:" + displayedName + " Cause: " + e.toString());
+        String msg = "Error decrypting:" + displayedName;
+        log.error(msg, e);
+        throw new FileSystemException(msg + " Cause: " + e.toString());
       }
     }
 
@@ -625,21 +564,15 @@ public class FileSystemUtils {
     File f = new File(instanceDir, encryptedSubmissionFile);
     try {
       decryptFile(ei, f, unencryptedDir);
-    } catch (InvalidKeyException e) {
-      e.printStackTrace();
-      throw new CryptoException("Error decrypting:" + f.getName() + " Cause: " + e.toString());
-    } catch (NoSuchAlgorithmException e) {
-      e.printStackTrace();
-      throw new CryptoException("Error decrypting:" + f.getName() + " Cause: " + e.toString());
-    } catch (InvalidAlgorithmParameterException e) {
-      e.printStackTrace();
-      throw new CryptoException("Error decrypting:" + f.getName() + " Cause: " + e.toString());
-    } catch (NoSuchPaddingException e) {
-      e.printStackTrace();
-      throw new CryptoException("Error decrypting:" + f.getName() + " Cause: " + e.toString());
+    } catch (InvalidKeyException | NoSuchPaddingException | InvalidAlgorithmParameterException
+            | NoSuchAlgorithmException e) {
+      String msg = "Error decrypting:" + f.getName();
+      log.error(msg, e);
+      throw new CryptoException(msg + " Cause: " + e.toString());
     } catch (IOException e) {
-      e.printStackTrace();
-      throw new FileSystemException("Error decrypting:" + f.getName() + " Cause: " + e.toString());
+      String msg = "Error decrypting:" + f.getName();
+      log.error(msg, e);
+      throw new FileSystemException(msg + " Cause: " + e.toString());
     }
 
     // get the FIM for the decrypted submission file
@@ -650,12 +583,10 @@ public class FileSystemUtils {
     try {
       Document subDoc = XmlManipulationUtils.parseXml(submissionFile);
       submissionFim = XmlManipulationUtils.getFormInstanceMetadata(subDoc.getRootElement());
-    } catch (ParsingException e) {
-      e.printStackTrace();
-      throw new FileSystemException("Error decrypting: " + submissionFile.getName() + " Cause: " + e.toString());
-    } catch (FileSystemException e) {
-      e.printStackTrace();
-      throw new FileSystemException("Error decrypting: " + submissionFile.getName() + " Cause: " + e.getMessage());
+    } catch (ParsingException | FileSystemException e) {
+      String msg = "Error decrypting: " + submissionFile.getName();
+      log.error(msg, e);
+      throw new FileSystemException(msg + " Cause: " + e);
     }
 
     boolean same = submissionFim.xparam.formId.equals(fim.xparam.formId);
@@ -702,12 +633,10 @@ public class FileSystemUtils {
         MessageDigest md = MessageDigest.getInstance("MD5");
         md.update(b.toString().getBytes("UTF-8"));
         messageDigest = md.digest();
-    } catch (NoSuchAlgorithmException e) {
-        e.printStackTrace();
-        throw new CryptoException("Error computing xml signature Cause: " + e.toString());
-    } catch (UnsupportedEncodingException e) {
-      e.printStackTrace();
-      throw new CryptoException("Error computing xml signature Cause: " + e.toString());
+    } catch (NoSuchAlgorithmException | UnsupportedEncodingException e) {
+      String msg = "Error computing xml signature";
+      log.error(msg, e);
+      throw new CryptoException(msg + " Cause: " + e);
     }
 
     same = true;
@@ -813,9 +742,9 @@ public class FileSystemUtils {
     try {
       fim = XmlManipulationUtils.getFormInstanceMetadata(rootElement);
     } catch (ParsingException e) {
-      e.printStackTrace();
-      throw new ParsingException(
-          "Unable to extract form instance medatadata from submission manifest. Cause: " + e.toString());
+      String msg = "Unable to extract form instance metadata from submission manifest";
+      log.error(msg, e);
+      throw new ParsingException(msg + ". Cause: " + e.toString());
     }
 
     if (!instanceIdMetadata.equals(fim.instanceId)) {

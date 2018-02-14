@@ -27,13 +27,15 @@ import java.util.Map;
 import java.util.Set;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.bushe.swing.event.EventBus;
 import org.bushe.swing.event.annotation.AnnotationProcessor;
+import org.opendatakit.briefcase.model.BriefcaseFormDefinition;
 import org.opendatakit.briefcase.model.DocumentDescription;
 import org.opendatakit.briefcase.model.FileSystemException;
 import org.opendatakit.briefcase.model.FormStatus;
 import org.opendatakit.briefcase.model.FormStatusEvent;
-import org.opendatakit.briefcase.model.BriefcaseFormDefinition;
 import org.opendatakit.briefcase.model.MetadataUpdateException;
 import org.opendatakit.briefcase.model.ParsingException;
 import org.opendatakit.briefcase.model.ServerConnectionInfo;
@@ -41,9 +43,11 @@ import org.opendatakit.briefcase.model.TerminationFuture;
 import org.opendatakit.briefcase.model.TransmissionException;
 import org.opendatakit.briefcase.model.XmlDocumentFetchException;
 import org.opendatakit.briefcase.util.AggregateUtils.DocumentFetchResult;
-import org.opendatakit.briefcase.util.ServerFetcher.SubmissionDownloadChunk;
+import org.opendatakit.briefcase.util.ServerFetcher.SubmissionChunk;
 
 public class ServerUploader {
+
+  private static final Log log = LogFactory.getLog(ServerUploader.class);
   
   private final int MAX_ENTRIES = 100;
 
@@ -98,18 +102,17 @@ public class ServerUploader {
           formToTransfer.setStatusString(msg, true);
           EventBus.publish(new FormStatusEvent(formToTransfer));
         } catch (IOException e) {
-          e.printStackTrace();
-          String msg = "WARNING: Submission directory could not be renamed: " + instanceDir.getName();
-          formToTransfer.setStatusString(msg, true);
+          String msg = "Submission directory could not be renamed: " + instanceDir.getName();
+          log.warn(msg, e);
+          formToTransfer.setStatusString("WARNING: " + msg, true);
           EventBus.publish(new FormStatusEvent(formToTransfer));
         }
       }
     }
-    
   }
   
   // remove any instances already completed on server
-  private void removeAllServerInstances(FormStatus fs, DatabaseUtils formDatabase, Set<File> instancesToUpload) {
+  private void subtractServerInstances(FormStatus fs, DatabaseUtils formDatabase, Set<File> instancesToUpload) {
 
     /*
      * The /view/submissionList interface returns the list of COMPLETED submissions
@@ -146,16 +149,16 @@ public class ServerUploader {
             terminationFuture);
         result = AggregateUtils.getXmlDocument(fullUrl, serverInfo, false, submissionChunkDescription, null);
       } catch (XmlDocumentFetchException e) {
-        fs.setStatusString("NOT ALL SUBMISSIONS RETRIEVED: Error fetching list of instanceIds: " + e.getMessage(), false);
+        fs.setStatusString("Not all submissions retrieved: Error fetching list of instanceIds: " + e.getMessage(), false);
         EventBus.publish(new FormStatusEvent(fs));
         return;
       }
 
-      SubmissionDownloadChunk chunk;
+      SubmissionChunk chunk;
       try {
         chunk = XmlManipulationUtils.parseSubmissionDownloadListResponse(result.doc);
       } catch (ParsingException e) {
-        fs.setStatusString("Not all instanceIds retrived: Error parsing the submission download chunk: " + e.getMessage(), false);
+        fs.setStatusString("Not all instanceIds retrieved: Error parsing the submission download chunk: " + e.getMessage(), false);
         EventBus.publish(new FormStatusEvent(fs));
         return;
       }
@@ -169,10 +172,11 @@ public class ServerUploader {
       }
     }
   }
-  
+
   public boolean uploadFormAndSubmissionFiles(List<FormStatus> formsToTransfer) {
+
     boolean allSuccessful = true;
-    
+
     for (FormStatus formToTransfer : formsToTransfer) {
 
       BriefcaseFormDefinition briefcaseLfd = (BriefcaseFormDefinition) formToTransfer.getFormDefinition();
@@ -208,18 +212,18 @@ public class ServerUploader {
         // error already logged...
         continue;
       }
-      
+
       Set<File> briefcaseInstances = FileSystemUtils.getFormSubmissionDirectories(briefcaseLfd.getFormDirectory());
       DatabaseUtils formDatabase = null;
       try {
-        formDatabase = new DatabaseUtils(FileSystemUtils.getFormDatabase(briefcaseLfd.getFormDirectory()));
+        formDatabase = DatabaseUtils.newInstance(briefcaseLfd.getFormDirectory());
         
         // make sure all the local instances are in the database...
         formDatabase.updateInstanceLists(briefcaseInstances);
-        
-        removeAllServerInstances(formToTransfer, formDatabase, briefcaseInstances);
-        // upload the submissions we have locally -- these will exclude whatever was on the server
-        
+
+        // exclude submissions the server reported as already submitted
+        subtractServerInstances(formToTransfer, formDatabase, briefcaseInstances);
+
         int i = 1;
         for (File briefcaseInstance : briefcaseInstances) {
           outcome = uploadSubmission(formDatabase, formToTransfer, u, i++, briefcaseInstances.size(), briefcaseInstance);
@@ -230,21 +234,23 @@ public class ServerUploader {
             break;
           }
         }
-      } catch ( FileSystemException e ) {
-        e.printStackTrace();
+      } catch ( SQLException | FileSystemException e ) {
         thisFormSuccessful = false;
         allSuccessful = false;
-        formToTransfer.setStatusString("unable to open form database: " + e.getMessage(), false);
+        String msg = "unable to open form database";
+        log.error(msg, e);
+        formToTransfer.setStatusString(msg + ": " + e.getMessage(), false);
         EventBus.publish(new FormStatusEvent(formToTransfer));
       } finally {
         if ( formDatabase != null ) {
           try {
             formDatabase.close();
-          } catch ( SQLException e) {
-            e.printStackTrace();
+          } catch ( SQLException e ) {
             thisFormSuccessful = false;
             allSuccessful = false;
-            formToTransfer.setStatusString("unable to close form database: " + e.getMessage(), false);
+            String msg = "unable to close form database";
+            log.warn(msg, e);
+            formToTransfer.setStatusString(msg + ": " + e.getMessage(), false);
             EventBus.publish(new FormStatusEvent(formToTransfer));
           }
         }
@@ -336,23 +342,23 @@ public class ServerUploader {
     // We have the actual server URL in u, possibly redirected to https.
     // We know we are talking to the server because the head request
     // succeeded and had a Location header field.
-  
+
     // try to send instance
     // get instance file
     File file = new File(instanceDirectory, "submission.xml");
-  
+
     String submissionFile = file.getName();
-  
+
     if (!file.exists()) {
       String msg = "Submission file not found: " + file.getAbsolutePath();
       formToTransfer.setStatusString(msg, false);
       EventBus.publish(new FormStatusEvent(formToTransfer));
       return false;
     }
-  
+
     // find all files in parent directory
     File[] allFiles = instanceDirectory.listFiles();
-  
+
     // clean up the list, removing anything that is suspicious
     // or that we won't attempt to upload. For OpenRosa servers,
     // we'll upload just about everything...
@@ -370,7 +376,7 @@ public class ServerUploader {
       }
     }
     SubmissionResponseAction action = new SubmissionResponseAction(file);
-    
+
     if ( isCancelled() ) {
       formToTransfer.setStatusString("aborting upload of submission...", true);
       EventBus.publish(new FormStatusEvent(formToTransfer));
@@ -379,9 +385,9 @@ public class ServerUploader {
 
     DocumentDescription submissionUploadDescription = new DocumentDescription("Submission upload failed.  Detailed error: ",
         "Submission upload failed.", "submission (" + count + " of " + totalCount + ")", terminationFuture);
-    boolean outcome = AggregateUtils.uploadFilesToServer(serverInfo, u, "xml_submission_file", file, files, 
+    boolean outcome = AggregateUtils.uploadFilesToServer(serverInfo, u, "xml_submission_file", file, files,
         submissionUploadDescription, action, terminationFuture, formToTransfer);
-    
+
     // and try to rename the instance directory to be its instanceID
     action.afterUpload(formToTransfer);
     return outcome;

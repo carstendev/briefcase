@@ -17,7 +17,11 @@
 
 package org.opendatakit.aggregate.parser;
 
+import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.PrintStream;
+import java.io.Serializable;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -29,6 +33,7 @@ import java.util.Map;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.javarosa.core.io.Std;
 import org.javarosa.core.model.DataBinding;
 import org.javarosa.core.model.FormDef;
 import org.javarosa.core.model.IDataReference;
@@ -47,8 +52,9 @@ import org.opendatakit.aggregate.constants.ParserConsts;
 import org.opendatakit.aggregate.exception.ODKIncompleteSubmissionData;
 import org.opendatakit.aggregate.exception.ODKIncompleteSubmissionData.Reason;
 import org.opendatakit.aggregate.form.XFormParameters;
+import org.opendatakit.briefcase.ui.StorageLocation;
+import org.opendatakit.briefcase.util.StringUtils;
 import org.opendatakit.common.utils.WebUtils;
-import org.opendatakit.common.web.constants.BasicConsts;
 
 /**
  * Parses an XML definition of an XForm based on java rosa types
@@ -58,7 +64,7 @@ import org.opendatakit.common.web.constants.BasicConsts;
  * @author chrislrobert@gmail.com
  *
  */
-public class BaseFormParserForJavaRosa {
+public class BaseFormParserForJavaRosa implements Serializable {
 
   private static final String LEADING_QUESTION_XML_PATTERN = "^[^<]*<\\s*\\?\\s*xml.*";
   private static final Log log = LogFactory.getLog(BaseFormParserForJavaRosa.class.getName());
@@ -111,9 +117,21 @@ public class BaseFormParserForJavaRosa {
              // new CoreModelModule().registerModule();
              // replace with direct call to PrototypeManager
              PrototypeManager.registerPrototypes(SERIALIABLE_CLASSES);
+             redirectOutput();
              new XFormsModule().registerModule();
              isJavaRosaInitialized = true;
        }
+    }
+  }
+
+  private static void redirectOutput() {
+    File jrLogFile = new File(new StorageLocation().getBriefcaseFolder(), ".briefcase-javarosa.log");
+    try {
+      PrintStream jrOut = new PrintStream(jrLogFile);
+      Std.setOut(jrOut);
+      Std.setErr(jrOut);
+    } catch (FileNotFoundException e) {
+      log.warn("failed to redirect javarosa output to " + jrLogFile);
     }
   }
 
@@ -277,7 +295,7 @@ public class BaseFormParserForJavaRosa {
         e.setAttribute(ParserConsts.NAMESPACE_ODK, "length", null);
       }
 
-      log.info("Calling handle found value " + ((value == null) ? "null" : value));
+      log.debug("Calling handle found value " + ((value == null) ? "null" : value));
 
       if (value != null) {
         Integer iValue = Integer.valueOf(value);
@@ -286,7 +304,7 @@ public class BaseFormParserForJavaRosa {
 
       // print unused attribute warning message for parent element
       if (XFormUtils.showUnusedAttributeWarning(e, usedAtts)) {
-        System.out.println(XFormUtils.unusedAttWarning(e, usedAtts));
+        log.debug(XFormUtils.unusedAttWarning(e, usedAtts));
       }
 
       addBinding(binding);
@@ -311,10 +329,10 @@ public class BaseFormParserForJavaRosa {
   /**
    * The ODK Id that uniquely identifies the form
    */
-  protected final FormDef rootJavaRosaFormDef;
+  protected transient final FormDef rootJavaRosaFormDef;
   protected final XFormParameters rootElementDefn;
-  protected final TreeElement trueSubmissionElement;
-  protected final TreeElement submissionElement;
+  protected transient final TreeElement trueSubmissionElement;
+  protected transient final TreeElement submissionElement;
   protected final XFormParameters submissionElementDefn;
   protected final String base64RsaPublicKey;
   protected final boolean isFileEncryptedForm;
@@ -332,7 +350,7 @@ public class BaseFormParserForJavaRosa {
   // extracted from XForm during parsing
   private final Map<String, Integer> stringLengths = new HashMap<String, Integer>();
   // original bindings from parse-time for later comparison
-  private final List<Element> bindElements = new ArrayList<Element>();
+  private transient final List<Element> bindElements = new ArrayList<Element>();
 
   private void setNodesetStringLength(String nodeset, Integer length) {
     stringLengths.put(nodeset, length);
@@ -586,7 +604,7 @@ public class BaseFormParserForJavaRosa {
     this.isNotUploadableForm = isNotUploadableForm;
 
     if (isNotUploadableForm) {
-      log.info("Form "
+      log.debug("Form "
           + submissionElementDefn.formId
           + " is not uploadable (submission method is not form-data-post or does not have an http: or https: url. ");
     }
@@ -654,12 +672,12 @@ public class BaseFormParserForJavaRosa {
       }
     }
     // clean illegal characters from title
-    title = formTitle.replace(BasicConsts.FORWARDSLASH, BasicConsts.EMPTY_STRING);
+    title = StringUtils.stripIllegalChars(formTitle);
   }
 
   @SuppressWarnings("unused")
   private void printTreeElementInfo(TreeElement treeElement) {
-    System.out.println("processing te: " + treeElement.getName() + " type: " + treeElement.getDataType()
+    log.debug("processing te: " + treeElement.getName() + " type: " + treeElement.getDataType()
         + " repeatable: " + treeElement.isRepeatable());
   }
 
@@ -724,7 +742,8 @@ public class BaseFormParserForJavaRosa {
     }
 
     // parse XML
-    FormDef formDef1, formDef2;
+    FormDef formDef1;
+    FormDef formDef2;
     BaseFormParserForJavaRosa existingParser = new BaseFormParserForJavaRosa(existingXml,
         existingTitle, true);
     formDef1 = incomingParser.rootJavaRosaFormDef;
@@ -876,8 +895,11 @@ public class BaseFormParserForJavaRosa {
    *         encryption.
    */
   public static DifferenceResult compareTreeElements(TreeElement treeElement1,
-      BaseFormParserForJavaRosa parser1, TreeElement treeElement2, BaseFormParserForJavaRosa parser2) {
-    boolean smalldiff = false, bigdiff = false;
+                                                     BaseFormParserForJavaRosa parser1,
+                                                     TreeElement treeElement2,
+                                                     BaseFormParserForJavaRosa parser2) {
+    boolean smalldiff = false;
+    boolean bigdiff = false;
 
     // compare names
     if (!treeElement1.getName().equals(treeElement2.getName())) {
@@ -1023,10 +1045,10 @@ public class BaseFormParserForJavaRosa {
       if (child.isRepeatable()) {
         if (child.getMult() != TreeReference.INDEX_TEMPLATE) {
           template1DropCount++;
-          log.info("element1:dropping " + child.getName());
+          log.debug("element1:dropping " + child.getName());
           continue;
         }
-        log.info("element1:retaining " + child.getName());
+        log.debug("element1:retaining " + child.getName());
       }
       element1ExcludingRepeatIndex0Children.add(child);
     }
@@ -1041,10 +1063,10 @@ public class BaseFormParserForJavaRosa {
       if (child.isRepeatable()) {
         if (child.getMult() != TreeReference.INDEX_TEMPLATE) {
           template2DropCount++;
-          log.info("element2:dropping " + child.getName());
+          log.debug("element2:dropping " + child.getName());
           continue;
         }
-        log.info("element2:retaining " + child.getName());
+        log.debug("element2:retaining " + child.getName());
       }
       if (element2ExcludingRepeatIndex0Children.get(child.getName()) != null) {
         // consider children not uniquely named as big differences

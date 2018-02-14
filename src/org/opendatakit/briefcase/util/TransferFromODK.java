@@ -24,16 +24,20 @@ import java.sql.SQLException;
 import java.util.List;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.bushe.swing.event.EventBus;
+import org.opendatakit.briefcase.model.BriefcaseFormDefinition;
 import org.opendatakit.briefcase.model.FileSystemException;
 import org.opendatakit.briefcase.model.FormStatus;
 import org.opendatakit.briefcase.model.FormStatusEvent;
-import org.opendatakit.briefcase.model.BriefcaseFormDefinition;
 import org.opendatakit.briefcase.model.OdkCollectFormDefinition;
-import org.opendatakit.briefcase.model.TerminationFuture;
 import org.opendatakit.briefcase.model.ParsingException;
+import org.opendatakit.briefcase.model.TerminationFuture;
 
 public class TransferFromODK implements ITransferFromSourceAction {
+
+  private static final Log log = LogFactory.getLog(TransferFromODK.class);
 
   final File odkOriginDir;
   final TerminationFuture terminationFuture;
@@ -70,8 +74,9 @@ public class TransferFromODK implements ITransferFromSourceAction {
         try {
           destinationFormMediaDir = FileSystemUtils.getMediaDirectory(briefcaseLfd.getFormDirectory());
         } catch (FileSystemException e) {
-          e.printStackTrace();
-          fs.setStatusString("unable to create media folder: " + e.getMessage(), false);
+          String msg = "unable to create media folder";
+          log.error(msg, e);
+          fs.setStatusString(msg + ": " + e.getMessage(), false);
           EventBus.publish(new FormStatusEvent(fs));
           return null;
         }
@@ -86,12 +91,13 @@ public class TransferFromODK implements ITransferFromSourceAction {
         }
         briefcaseLfd.clearMediaUpdate();
       }
-      } catch ( Exception e ) {
-        e.printStackTrace();
-        fs.setStatusString("unable to copy form definition and/or media folder: " + e.getMessage(), false);
-        EventBus.publish(new FormStatusEvent(fs));
-        return null;
-      }
+    } catch (Exception e) {
+      String msg = "unable to copy form definition and/or media folder";
+      log.error(msg, e);
+      fs.setStatusString(msg + ": " + e.getMessage(), false);
+      EventBus.publish(new FormStatusEvent(fs));
+      return null;
+    }
     
     return briefcaseLfd;
   }
@@ -105,7 +111,7 @@ public class TransferFromODK implements ITransferFromSourceAction {
       boolean isSuccessful = true;
       try {
         if ( terminationFuture.isCancelled() ) {
-          fs.setStatusString("aborted. Skipping fetch of form and submissions...", true);
+          fs.setStatusString("Aborted. Skipping fetch of form and submissions...", true);
           EventBus.publish(new FormStatusEvent(fs));
           return false;
         }
@@ -125,15 +131,16 @@ public class TransferFromODK implements ITransferFromSourceAction {
 
         DatabaseUtils formDatabase = null;
         try {
-          formDatabase = new DatabaseUtils(FileSystemUtils.getFormDatabase(briefcaseLfd.getFormDirectory()));
+          formDatabase = DatabaseUtils.newInstance(briefcaseLfd.getFormDirectory());
   
           File destinationFormInstancesDir;
           try {
             destinationFormInstancesDir = FileSystemUtils.getFormInstancesDirectory(briefcaseLfd.getFormDirectory());
           } catch (FileSystemException e) {
-            e.printStackTrace();
             allSuccessful = isSuccessful = false;
-            fs.setStatusString("unable to create instances folder: " + e.getMessage(), false);
+            String msg = "unable to create instances folder";
+            log.error(msg, e);
+            fs.setStatusString(msg + ": " + e.getMessage(), false);
             EventBus.publish(new FormStatusEvent(fs));
             continue;
           }
@@ -179,7 +186,7 @@ public class TransferFromODK implements ITransferFromSourceAction {
               File fullXml = new File(dir, dir.getName() + ".xml");
               File xml = new File(dir, "submission.xml");
               if ( !xml.exists() && fullXml.exists() ) {
-            	  xml = fullXml; // e.g., 1.1.5, 1.1.7
+                  xml = fullXml; // e.g., 1.1.5, 1.1.7
               }
 
               // this is a hack added to support easier generation of large test cases where we 
@@ -188,24 +195,26 @@ public class TransferFromODK implements ITransferFromSourceAction {
               // be the case.  In this instance, if there is one xml file in the directory,
               // rename it to match the directory name.
               if (!xml.exists()) {
-            	  File[] xmlFiles = dir.listFiles(new FilenameFilter() {
+                  File[] xmlFiles = dir.listFiles(new FilenameFilter() {
     
-    				@Override
-    				public boolean accept(File dir, String name) {
-    					return name.endsWith(".xml");
-    				}});
-            	  
-            	  if ( xmlFiles.length == 1 ) {
-            		  try {
-    					FileUtils.moveFile(xmlFiles[0], xml);
-    				} catch (IOException e) {
-    					e.printStackTrace();
-    					allSuccessful = isSuccessful = false;
-    		         fs.setStatusString("unable to rename form instance xml: " + e.getMessage(), false);
-    			      EventBus.publish(new FormStatusEvent(fs));
-    			      continue;
-    				}
-            	  }
+                    @Override
+                    public boolean accept(File dir, String name) {
+                        return name.endsWith(".xml");
+                    }
+                  });
+
+                  if ( xmlFiles.length == 1 ) {
+                      try {
+                        FileUtils.moveFile(xmlFiles[0], xml);
+                      } catch (IOException e) {
+                        allSuccessful = isSuccessful = false;
+                        String msg = "unable to rename form instance xml";
+                        log.error(msg, e);
+                        fs.setStatusString(msg + ": " + e.getMessage(), false);
+                        EventBus.publish(new FormStatusEvent(fs));
+                        continue;
+                      }
+                  }
               }
               
               if (xml.exists()) {
@@ -216,7 +225,7 @@ public class TransferFromODK implements ITransferFromSourceAction {
                           .getRootElement());
                   instanceId = formInstanceMetadata.instanceId;
                 } catch (ParsingException e) {
-                  e.printStackTrace();
+                  log.error("failed to get instance id from submission", e);
                 }
 
                 // OK, we can copy the directory off...
@@ -234,9 +243,10 @@ public class TransferFromODK implements ITransferFromSourceAction {
                     @Override
                     public boolean accept(File dir, String name) {
                       return name.endsWith(".xml");
-                    }});
+                    }
+                  });
                   if ( contents == null || contents.length == 0 ) break;
-                  if (contents.length == 1){
+                  if (contents.length == 1) {
                     String itsInstanceId = null;
                     try {
                       XmlManipulationUtils.FormInstanceMetadata formInstanceMetadata =
@@ -252,7 +262,7 @@ public class TransferFromODK implements ITransferFromSourceAction {
                         break;
                       }
                     } catch (ParsingException e) {
-                      e.printStackTrace();
+                      log.error("failed to parse submission", e);
                     }
                   }
 
@@ -269,31 +279,33 @@ public class TransferFromODK implements ITransferFromSourceAction {
                 try {
                   FileUtils.copyDirectory(dir, scratchInstance);
                 } catch (IOException e) {
-                  e.printStackTrace();
                   allSuccessful = isSuccessful = false;
-                  fs.setStatusString("unable to copy saved instance: " + e.getMessage(), false);
+                  String msg = "unable to copy saved instance";
+                  log.error(msg, e);
+                  fs.setStatusString(msg + ": " + e.getMessage(), false);
                   EventBus.publish(new FormStatusEvent(fs));
                   continue;
                 }
                 
                 if ( xml.equals(fullXml) ) {
-                	// need to rename
-    	            File odkSubmissionFile = new File(scratchInstance, fullXml.getName());
-    	            File scratchSubmissionFile = new File(scratchInstance, "submission.xml");
-    	  
-    	            try {
-    	              FileUtils.moveFile(odkSubmissionFile, scratchSubmissionFile);
-    	            } catch (IOException e) {
-    	              e.printStackTrace();
-    	              allSuccessful = isSuccessful = false;
-    	              fs.setStatusString("unable to rename submission file to submission.xml: " + e.getMessage(), false);
-    	              EventBus.publish(new FormStatusEvent(fs));
-    	              continue;
-    	            }
+                    // need to rename
+                    File odkSubmissionFile = new File(scratchInstance, fullXml.getName());
+                    File scratchSubmissionFile = new File(scratchInstance, "submission.xml");
+
+                    try {
+                      FileUtils.moveFile(odkSubmissionFile, scratchSubmissionFile);
+                    } catch (IOException e) {
+                      allSuccessful = isSuccessful = false;
+                      String msg = "unable to rename submission file to submission.xml";
+                      log.error(msg, e);
+                      fs.setStatusString(msg + ": " + e.getMessage(), false);
+                      EventBus.publish(new FormStatusEvent(fs));
+                      continue;
+                    }
                 } else {
-                	// delete the full xml file (keep only the submission.xml)
-                	File odkSubmissionFile = new File(scratchInstance, fullXml.getName());
-                	odkSubmissionFile.delete();
+                    // delete the full xml file (keep only the submission.xml)
+                    File odkSubmissionFile = new File(scratchInstance, fullXml.getName());
+                    odkSubmissionFile.delete();
                 }
 
                 fs.setStatusString(String.format("retrieving (%1$d)", instanceCount), true);
@@ -303,10 +315,11 @@ public class TransferFromODK implements ITransferFromSourceAction {
             }
           }
           
-        } catch ( FileSystemException e ) {
-          e.printStackTrace();
+        } catch ( SQLException | FileSystemException e ) {
           allSuccessful = isSuccessful = false;
-          fs.setStatusString("unable to open form database: " + e.getMessage(), false);
+          String msg = "unable to open form database";
+          log.error(msg, e);
+          fs.setStatusString(msg + ": " + e.getMessage(), false);
           EventBus.publish(new FormStatusEvent(fs));
           continue;
         } finally {
@@ -314,9 +327,10 @@ public class TransferFromODK implements ITransferFromSourceAction {
             try {
               formDatabase.close();
             } catch ( SQLException e) {
-              e.printStackTrace();
               allSuccessful = isSuccessful = false;
-              fs.setStatusString("unable to close form database: " + e.getMessage(), false);
+              String msg = "unable to close form database";
+              log.error(msg, e);
+              fs.setStatusString(msg + ": " + e.getMessage(), false);
               EventBus.publish(new FormStatusEvent(fs));
               continue;
             }
